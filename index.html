@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Car Wash App</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #f4f6f8;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 500px;
+      margin: 50px auto;
+      background: white;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+
+    h1, h2 {
+      text-align: center;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 6px;
+      background: #007bff;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    .slot {
+      display: inline-block;
+      margin: 5px;
+      padding: 10px 15px;
+      background: #28a745;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .package {
+      border: 1px solid #ccc;
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .package:hover {
+      background: #f1f1f1;
+    }
+
+    .selected {
+      border: 2px solid #007bff;
+      background: #e7f1ff;
+    }
+
+    pre {
+      background: #eee;
+      padding: 10px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🚗 Car Wash</h1>
+
+<!-- AUTH -->
+<div id="auth">
+  <h2>Login / Register</h2>
+  <input id="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button onclick="register()">Register</button>
+  <button onclick="login()">Login</button>
+</div>
+
+<!-- CUSTOMER -->
+<div id="customer" class="hidden">
+  <h2>Book a Wash</h2>
+
+  <input id="date" placeholder="Date (YYYY-MM-DD)" onchange="renderSlots()">
+  <input id="carType" placeholder="Car Type">
+
+  <h3>Select Wash Package</h3>
+
+  <div onclick="selectWash(event,'Basic',10)" class="package">
+    <b>Basic Wash ($10)</b><br>
+    Exterior wash + shine
+  </div>
+
+  <div onclick="selectWash(event,'Premium',30)" class="package">
+    <b>Premium Shine ($30)</b><br>
+    Exterior + interior, wax, windows
+  </div>
+
+  <div onclick="selectWash(event,'Deluxe',50)" class="package">
+    <b>Ultra Deluxe ($50)</b><br>
+    Full detail, tires, leather, everything
+  </div>
+
+  <input id="washType" type="hidden">
+  <input id="instructions" placeholder="Instructions">
+
+  <h3>Choose Time</h3>
+  <div id="slots"></div>
+</div>
+
+<!-- STAFF -->
+<div id="staff" class="hidden">
+  <h2>Staff Dashboard</h2>
+  <button onclick="getBookings()">View Bookings</button>
+  <pre id="staffData"></pre>
+</div>
+
+<!-- ADMIN -->
+<div id="admin" class="hidden">
+  <h2>Admin Panel</h2>
+  <input id="staffEmail" placeholder="Staff Email">
+  <input id="staffPassword" placeholder="Password">
+  <button onclick="createStaff()">Create Staff</button>
+</div>
+
+</div>
+
+<script>
+let token = "";
+let role = "";
+
+const slots = ["10:00","11:00","12:00","1:00","2:00"];
+
+function get(id){
+  return document.getElementById(id);
+}
+
+function show(roleType){
+  get("auth").classList.add("hidden");
+  get("customer").classList.add("hidden");
+  get("staff").classList.add("hidden");
+  get("admin").classList.add("hidden");
+
+  get(roleType).classList.remove("hidden");
+}
+
+// REGISTER
+async function register(){
+  await fetch("http://localhost:5000/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      email: get("email").value,
+      password: get("password").value
+    })
+  });
+  alert("Registered!");
+}
+
+// LOGIN
+async function login(){
+  const res = await fetch("http://localhost:5000/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      email: get("email").value,
+      password: get("password").value
+    })
+  });
+
+  const data = await res.json();
+  token = data.token;
+  role = data.role;
+
+  show(role);
+  if(role === "customer") renderSlots();
+}
+
+// SELECT PACKAGE
+function selectWash(event, type, price){
+  document.querySelectorAll(".package").forEach(p => p.classList.remove("selected"));
+
+  event.currentTarget.classList.add("selected");
+
+  get("washType").value = type + " - $" + price;
+}
+
+// 🔴 LIVE SLOTS
+async function renderSlots(){
+  const div = get("slots");
+  div.innerHTML = "";
+
+  const selectedDate = get("date").value;
+  if(!selectedDate) return;
+
+  const res = await fetch("http://localhost:5000/bookings", {
+    headers: { Authorization: token }
+  });
+
+  const bookings = await res.json();
+
+  slots.forEach(time=>{
+    const isBooked = bookings.find(
+      b => b.date === selectedDate && b.time === time
+    );
+
+    const btn = document.createElement("div");
+    btn.innerText = time;
+    btn.className = "slot";
+
+    if (isBooked){
+      btn.style.background = "red";
+      btn.style.cursor = "not-allowed";
+    } else {
+      btn.onclick = ()=>book(time);
+    }
+
+    div.appendChild(btn);
+  });
+}
+
+// BOOK
+async function book(time){
+  if(!get("washType").value){
+    alert("Select a wash package first!");
+    return;
+  }
+
+  await fetch("http://localhost:5000/book",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      Authorization: token
+    },
+    body: JSON.stringify({
+      date: get("date").value,
+      time,
+      carType: get("carType").value,
+      washType: get("washType").value,
+      instructions: get("instructions").value
+    })
+  });
+
+  alert("Booked!");
+  renderSlots();
+}
+
+// STAFF VIEW
+async function getBookings(){
+  const res = await fetch("http://localhost:5000/bookings",{
+    headers:{ Authorization: token }
+  });
+
+  const data = await res.json();
+  get("staffData").innerText = JSON.stringify(data,null,2);
+}
+
+// ADMIN CREATE STAFF
+async function createStaff(){
+  await fetch("http://localhost:5000/admin/create-staff",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      Authorization: token
+    },
+    body: JSON.stringify({
+      email: get("staffEmail").value,
+      password: get("staffPassword").value
+    })
+  });
+
+  alert("Staff created");
+}
+</script>
+
+</body>
+</html>
