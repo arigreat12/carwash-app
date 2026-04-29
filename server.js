@@ -6,23 +6,21 @@ const mongoose = require("mongoose");
 
 const app = express();
 
+// ✅ Middleware
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// ✅ ENV
+const PORT = process.env.PORT || 5000;
+const MONGO_URL = process.env.MONGO_URL || "mongodb://127.0.0.1:27017/carwash";
 const SECRET = "carwash_secret";
 
-// ✅ CONNECT TO MONGODB
-mongoose.connect(process.env.MONGO_URL);
+// ✅ MongoDB Connection (SAFE)
+mongoose.connect(MONGO_URL)
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => console.log("❌ MongoDB ERROR:", err));
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ MongoDB connected");
-});
-
-mongoose.connection.on("error", (err) => {
-  console.log("❌ MongoDB error:", err);
-});
-
-// ✅ MODELS
+// ✅ Models
 const User = mongoose.model("User", {
   email: String,
   password: String,
@@ -38,47 +36,60 @@ const Booking = mongoose.model("Booking", {
   instructions: String
 });
 
-// TIME SLOTS
-const timeSlots = ["10:00", "11:00", "12:00", "1:00", "2:00"];
+// ✅ Time slots
+const timeSlots = ["10:00","11:00","12:00","1:00","2:00"];
 
-// TEST
+// ✅ Test route
 app.get("/", (req, res) => {
   res.send("Backend working 🚗");
 });
 
-// REGISTER (CUSTOMER ONLY)
+// ✅ Register
 app.post("/register", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const hashed = await bcrypt.hash(password, 10);
+    const existing = await User.findOne({ email });
+    if (existing) return res.status(400).send("User already exists");
 
-  await User.create({
-    email,
-    password: hashed,
-    role: "customer"
-  });
+    const hashed = await bcrypt.hash(password, 10);
 
-  res.send("User created");
+    await User.create({
+      email,
+      password: hashed,
+      role: "customer"
+    });
+
+    res.send("User created");
+  } catch (err) {
+    res.status(500).send("Register error");
+  }
 });
 
-// LOGIN
+// ✅ Login
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user) return res.status(400).send("No user");
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).send("No user");
 
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.status(400).send("Wrong password");
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(400).send("Wrong password");
 
-  const token = jwt.sign({ email }, SECRET);
+    const token = jwt.sign({ email: user.email }, SECRET);
 
-  res.json({ token, role: user.role });
+    res.json({ token, role: user.role });
+  } catch {
+    res.status(500).send("Login error");
+  }
 });
 
-// AUTH MIDDLEWARE
+// ✅ Auth
 const auth = (req, res, next) => {
   const token = req.headers.authorization;
+
+  if (!token) return res.status(401).send("No token");
 
   try {
     const data = jwt.verify(token, SECRET);
@@ -89,80 +100,93 @@ const auth = (req, res, next) => {
   }
 };
 
-// BOOK APPOINTMENT
+// ✅ Book
 app.post("/book", auth, async (req, res) => {
-  const { date, time, carType, washType, instructions } = req.body;
+  try {
+    const { date, time, carType, washType, instructions } = req.body;
 
-  if (!timeSlots.includes(time)) {
-    return res.status(400).send("Invalid time slot");
+    if (!timeSlots.includes(time)) {
+      return res.status(400).send("Invalid time");
+    }
+
+    const exists = await Booking.findOne({ date, time });
+    if (exists) return res.status(400).send("Time already booked");
+
+    const booking = await Booking.create({
+      user: req.user.email,
+      date,
+      time,
+      carType,
+      washType,
+      instructions
+    });
+
+    res.json({ message: "Booked!", booking });
+  } catch {
+    res.status(500).send("Booking error");
   }
-
-  const exists = await Booking.findOne({ date, time });
-
-  if (exists) {
-    return res.status(400).send("Time already booked");
-  }
-
-  const booking = await Booking.create({
-    user: req.user.email,
-    date,
-    time,
-    carType,
-    washType,
-    instructions
-  });
-
-  res.json({ message: "Booked!", booking });
 });
 
-// VIEW BOOKINGS
+// ✅ Get bookings
 app.get("/bookings", auth, async (req, res) => {
-  const data = await Booking.find();
-  res.json(data);
+  try {
+    const data = await Booking.find();
+    res.json(data);
+  } catch {
+    res.status(500).send("Error fetching bookings");
+  }
 });
 
-// GET SLOTS
+// ✅ Get slots
 app.get("/slots", (req, res) => {
   res.json(timeSlots);
 });
 
-// ADMIN CREATE STAFF
+// ✅ Create staff (admin only)
 app.post("/admin/create-staff", auth, async (req, res) => {
-  if (req.user.email !== "admin@carwash.com") {
-    return res.status(403).send("Not allowed");
-  }
+  try {
+    if (req.user.email !== "admin@carwash.com") {
+      return res.status(403).send("Not allowed");
+    }
 
-  const { email, password } = req.body;
+    const { email, password } = req.body;
 
-  const hashed = await bcrypt.hash(password, 10);
-
-  await User.create({
-    email,
-    password: hashed,
-    role: "staff"
-  });
-
-  res.send("Staff created");
-});
-
-// 🔑 CREATE ADMIN IF NOT EXISTS
-(async () => {
-  const adminExists = await User.findOne({ email: "admin@carwash.com" });
-
-  if (!adminExists) {
-    const hashed = await bcrypt.hash("admin123", 10);
+    const hashed = await bcrypt.hash(password, 10);
 
     await User.create({
-      email: "admin@carwash.com",
+      email,
       password: hashed,
-      role: "admin"
+      role: "staff"
     });
 
-    console.log("Admin account created");
+    res.send("Staff created");
+  } catch {
+    res.status(500).send("Error creating staff");
+  }
+});
+
+// ✅ Auto-create admin
+(async () => {
+  try {
+    const admin = await User.findOne({ email: "admin@carwash.com" });
+
+    if (!admin) {
+      const hashed = await bcrypt.hash("admin123", 10);
+
+      await User.create({
+        email: "admin@carwash.com",
+        password: hashed,
+        role: "admin"
+      });
+
+      console.log("✅ Admin created");
+    }
+  } catch (err) {
+    console.log("Admin setup error:", err);
   }
 })();
 
-// START SERVER
-app.listen(5000, () => {
-  console.log("Server running on 5000");
+// ✅ Start server
+app.listen(PORT, () => {
+  console.log("🚀 Server running on port " + PORT);
 });
